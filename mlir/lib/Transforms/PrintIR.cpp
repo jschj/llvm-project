@@ -9,30 +9,59 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/FileSystem.h"
 
 namespace mlir {
-namespace {
-
 #define GEN_PASS_DEF_PRINTIRPASS
 #include "mlir/Transforms/Passes.h.inc"
+} // namespace mlir
 
+using namespace mlir;
+
+namespace {
 struct PrintIRPass : public impl::PrintIRPassBase<PrintIRPass> {
-  using impl::PrintIRPassBase<PrintIRPass>::PrintIRPassBase;
+  PrintIRPass(const PrintIRPassOptions &options) : PrintIRPassBase(options) {}
 
-  void runOnOperation() override {
-    llvm::dbgs() << "// -----// IR Dump";
-    if (!this->label.empty())
-      llvm::dbgs() << " " << this->label;
-    llvm::dbgs() << " //----- //\n";
-    getOperation()->dump();
-    markAllAnalysesPreserved();
-  }
+  PrintIRPass(const PrintIRPassOptions &options, OpPrintingFlags printingFlags)
+      : PrintIRPassBase(options), printingFlags(printingFlags) {}
+
+  void runOnOperation() override;
+
+private:
+  void printIR(raw_ostream &stream);
+
+  OpPrintingFlags printingFlags = std::nullopt;
 };
-
 } // namespace
 
-std::unique_ptr<Pass> createPrintIRPass(const PrintIRPassOptions &options) {
-  return std::make_unique<PrintIRPass>(options);
+void PrintIRPass::runOnOperation() {
+  if (fileName.empty()) {
+    printIR(llvm::errs());
+  } else {
+    std::error_code EC;
+    llvm::raw_fd_ostream stream(fileName, EC);
+
+    if (EC) {
+      llvm::errs() << "Could not open file: " << EC.message();
+      signalPassFailure();
+    } else {
+      printIR(stream);
+    }
+  }
+
+  markAllAnalysesPreserved();
 }
 
-} // namespace mlir
+void PrintIRPass::printIR(raw_ostream &stream) {
+  stream << "// -----// IR Dump";
+  if (!label.empty())
+    stream << " " << label;
+  stream << " //----- //\n";
+
+  getOperation()->print(stream, printingFlags);
+}
+
+std::unique_ptr<Pass> mlir::createPrintIRPass(const PrintIRPassOptions &options,
+                                              OpPrintingFlags printingFlags) {
+  return std::make_unique<PrintIRPass>(options, printingFlags);
+}
